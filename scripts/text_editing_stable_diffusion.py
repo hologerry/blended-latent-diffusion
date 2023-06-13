@@ -1,27 +1,23 @@
 import argparse
-import numpy as np
-from PIL import Image
+import os
 
-from diffusers import DDIMScheduler, StableDiffusionPipeline
+import numpy as np
 import torch
 
+from diffusers import DDIMScheduler, StableDiffusionPipeline
+from PIL import Image
 
-class BlendedLatnetDiffusion:
+
+class BlendedLatentDiffusion:
     def __init__(self):
         self.parse_args()
         self.load_models()
 
     def parse_args(self):
         parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--prompt", type=str, required=True, help="The target text prompt"
-        )
-        parser.add_argument(
-            "--init_image", type=str, required=True, help="The path to the input image"
-        )
-        parser.add_argument(
-            "--mask", type=str, required=True, help="The path to the input mask"
-        )
+        parser.add_argument("--prompt", type=str, required=True, help="The target text prompt")
+        parser.add_argument("--init_image", type=str, required=True, help="The path to the input image")
+        parser.add_argument("--mask", type=str, required=True, help="The path to the input mask")
         parser.add_argument(
             "--model_path",
             type=str,
@@ -29,16 +25,16 @@ class BlendedLatnetDiffusion:
             help="The path to the HuggingFace model",
         )
         parser.add_argument("--batch_size", type=int, default=4, help="The number of images to generate")
-        parser.add_argument("--blending_start_percentage", type=float, default=0.25, help="The diffusion steps percentage to jump")
+        parser.add_argument(
+            "--blending_start_percentage", type=float, default=0.25, help="The diffusion steps percentage to jump"
+        )
         parser.add_argument("--device", type=str, default="cuda")
         parser.add_argument("--output_path", type=str, default="outputs/res.jpg", help="The destination output path")
 
         self.args = parser.parse_args()
 
     def load_models(self):
-        pipe = StableDiffusionPipeline.from_pretrained(
-            self.args.model_path, torch_dtype=torch.float16
-        )
+        pipe = StableDiffusionPipeline.from_pretrained(self.args.model_path, torch_dtype=torch.float16)
         self.vae = pipe.vae.to(self.args.device)
         self.tokenizer = pipe.tokenizer
         self.text_encoder = pipe.text_encoder.to(self.args.device)
@@ -98,35 +94,25 @@ class BlendedLatnetDiffusion:
 
         self.scheduler.set_timesteps(num_inference_steps)
 
-        for t in self.scheduler.timesteps[
-            int(len(self.scheduler.timesteps) * blending_percentage) :
-        ]:
+        for t in self.scheduler.timesteps[int(len(self.scheduler.timesteps) * blending_percentage) :]:
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)
 
-            latent_model_input = self.scheduler.scale_model_input(
-                latent_model_input, timestep=t
-            )
+            latent_model_input = self.scheduler.scale_model_input(latent_model_input, timestep=t)
 
             # predict the noise residual
             with torch.no_grad():
-                noise_pred = self.unet(
-                    latent_model_input, t, encoder_hidden_states=text_embeddings
-                ).sample
+                noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
             # perform guidance
             noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
-                noise_pred_text - noise_pred_uncond
-            )
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
 
             # compute the previous noisy sample x_t -> x_t-1
             latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
             # Blending
-            noise_source_latents = self.scheduler.add_noise(
-                source_latents, torch.randn_like(latents), t
-            )
+            noise_source_latents = self.scheduler.add_noise(source_latents, torch.randn_like(latents), t)
             latents = latents * latent_mask + noise_source_latents * (1 - latent_mask)
 
         latents = 1 / 0.18215 * latents
@@ -163,7 +149,7 @@ class BlendedLatnetDiffusion:
 
 
 if __name__ == "__main__":
-    bld = BlendedLatnetDiffusion()
+    bld = BlendedLatentDiffusion()
     results = bld.edit_image(
         bld.args.init_image,
         bld.args.mask,
@@ -171,4 +157,5 @@ if __name__ == "__main__":
         blending_percentage=bld.args.blending_start_percentage,
     )
     results_flat = np.concatenate(results, axis=1)
+    os.makedirs(os.path.dirname(bld.args.output_path), exist_ok=True)
     Image.fromarray(results_flat).save(bld.args.output_path)

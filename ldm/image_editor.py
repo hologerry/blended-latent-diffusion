@@ -1,27 +1,29 @@
 import argparse
 import os
+
 from pathlib import Path
 
-import numpy as np
 import cv2
+import numpy as np
 import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from torchvision import transforms
-from torch import nn
+
 from einops import rearrange
-from general_utils.seamless_cloning import poisson_seamless_clone
 from omegaconf import OmegaConf
 from PIL import Image
+from scipy.ndimage import binary_dilation
+from torch import nn
+from torchvision import transforms
 from torchvision.utils import make_grid
 from tqdm import tqdm, trange
-from scipy.ndimage import binary_dilation
 
+import clip
+
+from general_utils.seamless_cloning import poisson_seamless_clone
 from ldm.models.diffusion.ddim import DDIMSampler
 from ldm.models.diffusion.ddpm import LatentDiffusion
-
 from ldm.util import instantiate_from_config
-import clip
 
 
 def load_model_from_config(config, ckpt, device, verbose=False) -> LatentDiffusion:
@@ -57,9 +59,7 @@ def read_image(img_path: str, device, dest_size=(256, 256)):
     return image
 
 
-def read_mask(
-    mask_path: str, device, dilation_iterations: int = 0, dest_size=(32, 32), img_size=(256, 256)
-):
+def read_mask(mask_path: str, device, dilation_iterations: int = 0, dest_size=(32, 32), img_size=(256, 256)):
     org_mask = Image.open(mask_path).convert("L")
     mask = org_mask.resize(dest_size, Image.NEAREST)
     mask = np.array(mask) / 255
@@ -293,9 +293,7 @@ class ImageEditor:
             else:
                 self.org_mask = self.org_mask.repeat((1, 3, 1, 1))
 
-                resized_mask = F.interpolate(
-                    self.mask[-1].unsqueeze(0), size=(self.opt.H, self.opt.W)
-                )
+                resized_mask = F.interpolate(self.mask[-1].unsqueeze(0), size=(self.opt.H, self.opt.W))
                 resized_mask = resized_mask.repeat((1, 3, 1, 1))
 
             encoder_posterior = self.model.encode_first_stage(self.init_image)
@@ -304,9 +302,7 @@ class ImageEditor:
             reconstructed_image = torch.clamp((reconstructed_image + 1.0) / 2.0, min=0.0, max=1.0)
 
             init_image = (self.init_image + 1) / 2
-            self._save_images(
-                [init_image[0], self.org_mask[0]], os.path.join(self.sample_path / "assets")
-            )
+            self._save_images([init_image[0], self.org_mask[0]], os.path.join(self.sample_path / "assets"))
             inputs_row = [
                 init_image,
                 reconstructed_image,
@@ -329,9 +325,7 @@ class ImageEditor:
 
     @torch.no_grad()
     def _get_sorted_results_by_CLIP(self, samples):
-        clip_model = (
-            clip.load("ViT-B/16", device=self.device, jit=False)[0].eval().requires_grad_(False)
-        )
+        clip_model = clip.load("ViT-B/16", device=self.device, jit=False)[0].eval().requires_grad_(False)
         clip_size = clip_model.visual.input_resolution
         clip_normalize = transforms.Normalize(
             mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]
@@ -359,11 +353,7 @@ class ImageEditor:
         self.opt = self.get_arguments()
         config = OmegaConf.load("configs/latent-diffusion/txt2img-1p4B-eval.yaml")
 
-        self.device = (
-            torch.device(f"cuda:{self.opt.gpu_id}")
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        self.device = torch.device(f"cuda:{self.opt.gpu_id}") if torch.cuda.is_available() else torch.device("cpu")
         self.model = load_model_from_config(
             config=config, ckpt="models/ldm/text2img-large/model.ckpt", device=self.device
         )
@@ -378,9 +368,7 @@ class ImageEditor:
 
         img_size = (self.opt.W, self.opt.H)
         mask_size = (self.opt.W // 8, self.opt.H // 8)
-        self.init_image = read_image(
-            img_path=self.opt.init_image, device=self.device, dest_size=img_size
-        )
+        self.init_image = read_image(img_path=self.opt.init_image, device=self.device, dest_size=img_size)
 
         if self.opt.mask == "":
             self.mask, self.org_mask = None, None

@@ -1,25 +1,27 @@
 import argparse
 import copy
 import os
+
 from pathlib import Path
 
-from PIL import Image
 import lpips
-from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from einops import rearrange
-from general_utils.seamless_cloning import poisson_seamless_clone
 from omegaconf import OmegaConf
+from PIL import Image
 from torch import optim
 from torch.utils.data.dataloader import DataLoader
 from torch.utils.data.dataset import Dataset
 from torchvision.transforms import Compose, Resize, ToTensor
 from torchvision.utils import make_grid
+from tqdm import tqdm
 
+from general_utils.seamless_cloning import poisson_seamless_clone
 from ldm.image_editor import load_model_from_config, read_image, read_mask
 from ldm.models.diffusion.ddpm import LatentDiffusion
 
@@ -51,11 +53,7 @@ class ImageReconstruction:
     ):
         self.opt = self.get_arguments()
         config = OmegaConf.load("configs/latent-diffusion/txt2img-1p4B-eval.yaml")
-        self.device = (
-            torch.device(f"cuda:{self.opt.gpu_id}")
-            if torch.cuda.is_available()
-            else torch.device("cpu")
-        )
+        self.device = torch.device(f"cuda:{self.opt.gpu_id}") if torch.cuda.is_available() else torch.device("cpu")
         self.model = load_model_from_config(
             config=config, ckpt="models/ldm/text2img-large/model.ckpt", device=self.device
         )
@@ -63,9 +61,7 @@ class ImageReconstruction:
 
         img_size = (self.opt.W, self.opt.H)
         mask_size = (self.opt.W // 8, self.opt.H // 8)
-        self.init_image = read_image(
-            img_path=self.opt.init_image, device=self.device, dest_size=img_size
-        )
+        self.init_image = read_image(img_path=self.opt.init_image, device=self.device, dest_size=img_size)
         self.mask, self.org_mask = read_mask(
             mask_path=self.opt.mask, device=self.device, dest_size=mask_size, img_size=img_size
         )
@@ -169,16 +165,12 @@ class ImageReconstruction:
 
         if self.opt.reconstruction_type == "pixel":
             for sample in samples:
-                sample = sample.to(self.device) * self.org_mask[0] + self.init_image * (
-                    1 - self.org_mask[0]
-                )
+                sample = sample.to(self.device) * self.org_mask[0] + self.init_image * (1 - self.org_mask[0])
                 sample = torch.clamp((sample + 1.0) / 2.0, min=0.0, max=1.0)
                 reconstructed_samples.append(sample)
         elif self.opt.reconstruction_type == "poisson":
             mask_numpy = self.org_mask.squeeze().cpu().numpy()
-            init_image_numpy = rearrange(
-                ((self.init_image + 1) / 2).squeeze().cpu().numpy(), "c h w -> h w c"
-            )
+            init_image_numpy = rearrange(((self.init_image + 1) / 2).squeeze().cpu().numpy(), "c h w -> h w c")
 
             for sample in samples:
                 sample = torch.clamp((sample + 1.0) / 2.0, min=0.0, max=1.0)
@@ -188,9 +180,7 @@ class ImageReconstruction:
                     destination_image=init_image_numpy,
                     mask=mask_numpy,
                 )
-                cloned_sample = torch.from_numpy(
-                    cloned_sample[np.newaxis, ...].transpose(0, 3, 1, 2)
-                ).to(self.device)
+                cloned_sample = torch.from_numpy(cloned_sample[np.newaxis, ...].transpose(0, 3, 1, 2)).to(self.device)
                 reconstructed_samples.append(cloned_sample)
         elif self.opt.reconstruction_type == "optimization":
             for sample in samples:
@@ -218,8 +208,7 @@ class ImageReconstruction:
         curr_reconstruction = self.model.decode_first_stage(curr_latent)
         loss = (
             F.mse_loss(fg_image * mask, curr_reconstruction * mask)
-            + F.mse_loss(bg_image * (1 - mask), curr_reconstruction * (1 - mask))
-            * preservation_ratio
+            + F.mse_loss(bg_image * (1 - mask), curr_reconstruction * (1 - mask)) * preservation_ratio
         )
         # loss = self.lpips_model(fg_image * mask, curr_reconstruction * mask).sum() + \
         #     self.lpips_model(bg_image * (1 - mask), curr_reconstruction * (1 - mask)).sum()
@@ -299,9 +288,7 @@ class ImageReconstruction:
             sample = 255.0 * rearrange(sample.cpu().numpy(), "c h w -> h w c")
             Image.fromarray(sample.astype(np.uint8)).save(os.path.join(samples_dir, f"{i:04}.png"))
 
-    def reconstruct_image_by_optimization(
-        self, fg_image: torch.Tensor, bg_image: torch.Tensor, mask: torch.Tensor
-    ):
+    def reconstruct_image_by_optimization(self, fg_image: torch.Tensor, bg_image: torch.Tensor, mask: torch.Tensor):
         encoder_posterior = self.model.encode_first_stage(fg_image)
         initial_latent = self.model.get_first_stage_encoding(encoder_posterior)
 
@@ -324,9 +311,7 @@ class ImageReconstruction:
                 )
             optimizer.zero_grad()
 
-            loss = self.loss(
-                fg_image=fg_image, bg_image=bg_image, curr_latent=curr_latent, mask=mask
-            )
+            loss = self.loss(fg_image=fg_image, bg_image=bg_image, curr_latent=curr_latent, mask=mask)
 
             if self.verbose:
                 print(f"Iteration {i}: Curr loss is {loss}")
